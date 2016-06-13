@@ -13,12 +13,12 @@ class RecordInterface(asyncio.Protocol):
     def __init__(self, reset_interface, output_file):
         super()
         self.reset_interface = reset_interface
-        self.output_file = output_file 
+        self.output_file = output_file
         self.record = { 'write': dict(), 'read': dict() }
 
     def write(self, message):
         logging.debug("sending data %s" % message)
-        self.record["write"][time.time()] = str(message).strip()
+        self.record["write"][time.time()] = message.decode('UTF-8').strip()
         self.transport.write(message)
 
     def connection_made(self, transport):
@@ -31,17 +31,11 @@ class RecordInterface(asyncio.Protocol):
 
     def data_received(self, data):
         logging.debug('data received %s' % repr(data))
-        self.record["read"][time.time()] = str(data).strip()
-        cmd = data.strip()
-        if cmd[:2] == b'IV':
-            model = cmd[2:-4]
-            major = cmd[3:-2]
-            minor = cmd[5:]
-            logging.info("Water Rower version %s %s.%s" % (model, major, minor))
+        self.record["read"][time.time()] = data.decode('UTF-8').strip()
 
     def end_session(self):
         self.transport.close()
-        self.output_file.write(json.dumps(self.record))
+        self.output_file.write(json.dumps(self.record, sort_keys=True, indent=4, separators=(',', ': ')))
 
 @click.group()
 @click.option('--tty', required=True, default="/dev/ttyACM0", type=click.Path(exists=True), help="TTY device for accessing Water Rower USB interface")
@@ -77,6 +71,8 @@ def record(ctx, reset, output):
     try:
         loop.run_forever()
     except KeyboardInterrupt:
+        pass
+    finally:
         interface.end_session()
     loop.close()
 
