@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+# loosely based on https://github.com/gar3thjon3s/rower
+
 import click
 import sys
 import logging
@@ -31,7 +33,16 @@ class RecordInterface(asyncio.Protocol):
 
     def data_received(self, data):
         logging.debug('data received %s' % repr(data))
-        self.record["read"][time.time()] = data.decode('UTF-8').strip()
+        data = data.decode('UTF-8').strip()
+        self.record["read"][time.time()] = data
+        if data[:2] == "SE":
+            # stroke has ended
+            # Requests the contents of a single location XXX, this will return a single byte in hex format.  
+            self.write(b'IRS055\r\n') # total_distanse_m
+            self.write(b'IRS1A9\r\n') # strokerate
+            self.write(b'IRS140\r\n') # total_strokes
+            # Returns the single byte of data Y1 from location XXX for the users application.
+            #self.write("IDS")
 
     def end_session(self):
         self.transport.close()
@@ -73,6 +84,7 @@ def record(ctx, reset, output):
     except KeyboardInterrupt:
         pass
     finally:
+        logging.info("Ending recording session.")
         interface.end_session()
     loop.close()
 
