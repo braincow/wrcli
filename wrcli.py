@@ -12,9 +12,10 @@ import asyncio
 import serial.aio
 
 class RecordInterface(asyncio.Protocol):
-    def __init__(self, reset_interface, output_file):
+    def __init__(self, reset_interface, record_pulse, output_file):
         super()
         self.reset_interface = reset_interface
+        self.record_pulse = record_pulse
         self.output_file = output_file
         self.record = { 'write': dict(), 'read': dict() }
 
@@ -24,6 +25,7 @@ class RecordInterface(asyncio.Protocol):
         self.transport.write(message)
 
     def connection_made(self, transport):
+        self.start_time = time.time()
         self.transport = transport
         logging.debug("port opened %s" % self.transport)
         self.write(b'USB\r\n')
@@ -34,7 +36,9 @@ class RecordInterface(asyncio.Protocol):
     def data_received(self, data):
         logging.debug('data received %s' % repr(data))
         data = data.decode('UTF-8').strip()
-        self.record["read"][time.time()] = data
+        if data[:1] == "P" and not self.record_pulse:
+            # return empty and exit quietly as we do not want to record pulse messages
+            return
         if data[:2] == "SE":
             # stroke has ended
             # Requests the contents of a single location XXX, this will return a single byte in hex format.  
@@ -43,13 +47,15 @@ class RecordInterface(asyncio.Protocol):
             self.write(b'IRS140\r\n') # total_strokes
             # Returns the single byte of data Y1 from location XXX for the users application.
             #self.write("IDS")
+        # add row to recording
+        self.record["read"][time.time() - self.start_time] = data
 
     def end_session(self):
         self.transport.close()
         self.output_file.write(json.dumps(self.record, sort_keys=True, indent=4, separators=(',', ': ')))
 
 @click.group()
-@click.option('--tty', required=True, default="/dev/ttyACM0", type=click.Path(exists=True), help="TTY device for accessing Water Rower USB interface")
+@click.option('--tty', required=True, default="/dev/ttyACM1", type=click.Path(exists=True), help="TTY device for accessing Water Rower USB interface")
 @click.option('--baudrate', required=True, default=115200, help="Baudrate used when communicating with the Water Rower USB interface")
 @click.option('--debug/--no-debug', is_flag=True, default=False, help="Enable more verbose output from execution")
 @click.pass_context
@@ -67,13 +73,14 @@ def cli(ctx, baudrate, tty, debug):
 
 @cli.command()
 @click.option('--reset/--no-reset', is_flag=True, default=True, help="Reset rowing computer on initiating communication")
+@click.option('--pulse/--no-pulse', is_flag=True, default=False, help="Record intensity pulse")
 @click.argument('output', required=True, type=click.File('w'))
 @click.pass_context
-def record(ctx, reset, output):
+def record(ctx, reset, pulse, output):
     """
     Record rowing computer inputs and outputs in json format as they happen. End session with ctrl+c
     """
-    interface = RecordInterface(reset_interface=reset, output_file=output)
+    interface = RecordInterface(reset_interface=reset, record_pulse=pulse, output_file=output)
     loop = asyncio.get_event_loop()
     coro = serial.aio.create_serial_connection(loop,
         lambda: interface,
@@ -82,7 +89,7 @@ def record(ctx, reset, output):
     try:
         loop.run_forever()
     except KeyboardInterrupt:
-        pass
+        logging.info("Keyboard interrupt")
     finally:
         logging.info("Ending recording session.")
         interface.end_session()

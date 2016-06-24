@@ -57,3 +57,6 @@ local_data/
 
 # do not push virtual environment if any
 venv/
+
+# do not add open office lock files
+.~lock.*
